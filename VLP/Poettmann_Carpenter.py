@@ -79,7 +79,7 @@ def poettmann_carpenter(oil_rate: float, gor_st: float, water_cut: float, pvt_ta
     for i in range(num_iter):
         # PVT properties at the current pressure
         pressure_round: float = float(round(pressure))
-        print(pressure_round)
+        # print(pressure_round)
         oil_den: float = pvt_table.loc[pvt_table['Pressure'] == pressure_round, 'Oil Density'].iloc[0]  # lbm/ft3
         water_den: float = Constants.water_den * sg_water  # lbm/ft3
         gas_den: float = pvt_table.loc[pvt_table['Pressure'] == pressure_round, 'Gas Density'].iloc[0]  # lbm/ft3
@@ -113,6 +113,79 @@ def poettmann_carpenter(oil_rate: float, gor_st: float, water_cut: float, pvt_ta
         pressure += del_p
         pressure_arr.append(pressure)
 
+    pressure_trav['Pressure'] = pressure_arr
+
+    return pressure_trav
+
+
+def poettmann_carpenter_2(oil_rate: float, gor_st: float, water_cut: float, pvt_table: pd.DataFrame, thp: float,
+                          tht: float, tbg_id: float, tbg_shoe: float, num_iter: int,
+                          sg_water: Optional[float] = 1.0) -> pd.DataFrame:
+
+    pressure_trav: pd.DataFrame = pd.DataFrame()
+    depth_arr: List[float] = [0]
+    pressure_arr: List[float] = [thp]  # Empty list to store all the pressures with THP as the first element
+
+    # Convert the tubing and id from inches to feet
+    tbg_id *= Constants.in_to_ft
+
+    # Convert the wellhead temperature from degC to degR
+    tht = Constants.convert_temp(tht, 'C', 'R')
+
+    # Calculate the WOR and store it in a new variable
+    wor: float = water_cut / (1 - water_cut)
+    gor: float = gor_st
+
+    # Assume some pressure drop
+    del_p = 5
+    # Initialise the pressure and find the average pressure of the ith element
+    pressure: float = thp
+
+    # Length traversed after the ith element
+    traversed_length: float = 0
+    i = 1  # Element counter
+
+    # Iterate over each element and compute the pressure gradient
+    while traversed_length <= tbg_shoe:
+        # Calculate the average pressure of the element
+        # PVT properties at the current pressure
+        pressure_avg: float = pressure + (i - 0.5) * del_p
+        pressure_arr.append(pressure_avg)
+        pressure_avg: float = float(round(pressure_avg))
+        # print(pressure_round)
+        oil_den: float = pvt_table.loc[pvt_table['Pressure'] == pressure_avg, 'Oil Density'].iloc[0]  # lbm/ft3
+        water_den: float = Constants.water_den * sg_water  # lbm/ft3
+        gas_den: float = pvt_table.loc[pvt_table['Pressure'] == pressure_avg, 'Gas Density'].iloc[0]  # lbm/ft3
+        gas_sol: float = pvt_table.loc[pvt_table['Pressure'] == pressure_avg, 'Gas Solubility'].iloc[0]  # scf/stb
+        gas_comp_factor: float = \
+            pvt_table.loc[pvt_table['Pressure'] == pressure_avg, 'Gas Compressibility Factor'].iloc[0]
+        oil_fvf: float = pvt_table.loc[pvt_table['Pressure'] == pressure_avg, 'Oil FVF'].iloc[0]  # rb/stb
+
+        # Mass and Volume associated with one barrel oil for ith element
+        mass_i: float = Constants.bbl_to_ft3 * (oil_den + wor * water_den) + gor * gas_den
+        volume_i: float = Constants.bbl_to_ft3 * (oil_fvf + wor) + (gor - gas_sol) * (14.7 / pressure) * (
+                tht / 520) * gas_comp_factor
+        # Average density of ith element
+        density_i: float = mass_i / volume_i
+
+        # Calculate friction factor
+        d_rho_v: float = 1.4737 * np.power(10.0, -5.0) * mass_i * oil_rate / tbg_id
+        friction_fact: float = np.power(10.0, 1.444 - 2.5 * np.log(d_rho_v))
+
+        # Average K-factor
+        k_fact: float = friction_fact * np.square(oil_rate) * np.square(mass_i) / (
+                7.7137 * np.power(10.0, 10.0) * np.power(tbg_id, 5))
+
+        # Pressure gradient in psia/ft
+        pressure_grad: float = (density_i + k_fact / density_i) / 144
+
+        # Calculate the height of the ith element and total length traversed
+        del_h: float = Constants.ft_to_m * (del_p / pressure_grad)
+        traversed_length += del_h
+        depth_arr.append(traversed_length)
+        i += 1
+
+    pressure_trav['Depth'] = depth_arr
     pressure_trav['Pressure'] = pressure_arr
 
     return pressure_trav
